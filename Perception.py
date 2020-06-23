@@ -64,7 +64,7 @@ class Perceptor(object):
         # points = self.Simulation.depthData2pointCloud(values, self.fxfypxpy)
         points = self.Simulation.depthData2pointCloud(depth_mask, self.fxfypxpy)
         # self.current_object_points = [j for i in points for j in i if j[2]!=0]
-        self.current_object_points = [j for i in points for j in i if j[0]!=0 and j[1]!=0 and j[2]!=0]
+        self.current_object_points = [j for i in points for q,j in enumerate(i) if j[0]!=0 and j[1]!=0 and j[2]!=0 and q%2==0]
         self.camera_Frame.setPointCloud(points, rgb)
         self.Model_Viewer.recopyMeshes(self.Model)
         self.Model_Viewer.setConfiguration(self.Model)
@@ -103,9 +103,58 @@ class Perceptor(object):
         # komo_viewer.playVideo(delay=0.1)
 
 
+    def spawn_cloud_objects(self):
+        self.no_point_objects = 0
+        for i, position in enumerate(self.current_object_points):
+                obj_name = 'Point_object_{}'.format(i+1)
+                point_object = self.Model.addFrame(obj_name)
+                point_object.setShape(ry.ST.sphere, [.005])
+                self.Model.attach('camera', obj_name)
+                point_object.setRelativePosition(position)
+                self.no_point_objects += 1
+        self.Model_Viewer.recopyMeshes(self.Model)
+        self.Model_Viewer.setConfiguration(self.Model)
+
+
+    def optimize(self, obj_name):
+        optimizer = self.Model.komo_path(1.,1,self.tau,True)
+        optimizer.clearObjectives()
+        optimizer.add_qControlObjective(order=1, scale=1e3)
+        optimizer.addSquaredQuaternionNorms(0., 1., 1e2)
+        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.eq, [1e2])
+        # optimizer.addObjective([], ry.FS.vectorY, [obj_name], ry.OT.eq, [1e2], order=1)
+        for i in range(self.no_point_objects):
+            point_name = 'Point_object_{}'.format(i+1)
+            optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e0], target = [.001])
+
+        optimizer.optimize()
+
+        # print('#######################RESULT##################################')
+
+        # print(optimizer.getConfiguration(0))
+        # print(optimizer.getReport())
+        # return optimizer.getCosts()
+        return optimizer
+
+
+    def spawn_object(self):
+        self.test_object = self.Model.addFrame('testtest') 
+        self.test_object.setShape(ry.ST.sphere, [0.02])
+        self.test_object.setColor([0,1,0])
+        self.test_object.setPosition([0,0.2,1.5])
+        self.test_object.setContact(1)
+        self.Model.makeObjectsFree(["testtest"])
+        # center = self.get_centers(1).tolist()
+        # self.test_object.setPosition(center[0])
+
+
+
+
+
+
 
 if __name__ == "__main__":
-    detector = Perceptor(5)
+    detector = Perceptor(1)
 
     for t in range(2000):
         # time.sleep(0.01)
@@ -115,17 +164,35 @@ if __name__ == "__main__":
             detector.update_binary_mask(rgb)
             detector.update_point_cloud(rgb, depth)
 
+
+
+        if t==150:
+            # centers = detector.get_centers(5).tolist()
+            # print(len(centers))
+            # detector.create_shapes(centers)
+            detector.spawn_cloud_objects()
+            print(detector.RealWorld.frame('Sphere_1').getPosition())
+            # print(detector.Model.getFrameNames())
+
         if t==250:
-            centers = detector.get_centers(5).tolist()
-            print(len(centers))
-            detector.create_shapes(centers)
+            detector.spawn_object()
+            test = detector.optimize('testtest')
+            print(test.getCosts())
+            detector.Model.setFrameState(test.getConfiguration(0))
+            detector.Model_Viewer.setConfiguration(detector.Model)
+            print(detector.test_object.getPosition())
+            # print(detector.Model.getFrameNames())
+            print('Model object position:')
+            print(detector.Model.getFrame('table').getPosition())
+            print('Real World object position:')
+            print(detector.RealWorld.frame('Sphere_1').getPosition())
+
    
 
         detector.step()
 
     # detector.move_pregrasp_unoccluded('Sphere_1')
 
-    time.sleep(5)
 
     # cv2.imshow('asldf', detector.background_gray)
     # cv2.imshow('rgb', detector.background_rgb)
