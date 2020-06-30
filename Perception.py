@@ -5,6 +5,7 @@ import time
 import cv2
 import numpy as np
 from sklearn.cluster import KMeans
+from termcolor import colored
 
 
 class Perceptor(object):
@@ -25,6 +26,8 @@ class Perceptor(object):
         self.tau = 0.01
         [self.background_rgb, self.background_depth] = self.Simulation.getImageAndDepth()
         self.background_gray = cv2.cvtColor(self.background_rgb, cv2.COLOR_BGR2GRAY)
+        self.shape_dic = {'sphere': ry.ST.sphere, 'box': ry.ST.box}
+        # self.shape_dic = {'sphere': ry.ST.sphere, 'box': ry.ST.box, 'capsule': ry.ST.capsule, 'cylinder': ry.ST.cylinder}
         print('Init successful!')
 
 
@@ -35,10 +38,11 @@ class Perceptor(object):
         for i in range(1, no_obj+1):
             obj_name = 'Sphere_{}'.format(i)
             spawn_object = self.RealWorld.addFrame(obj_name)
-            spawn_object.setShape(ry.ST.sphere, [0.03])
+            # spawn_object.setShape(ry.ST.sphere, [0.03])
+            spawn_object.setShape(ry.ST.box, [0.02, 0.02, 0.02])
             spawn_object.setColor([1,0,0])
-            spawn_object.setPosition([0., .1*i, 2.])
-            spawn_object.setMass(0.1)
+            spawn_object.setPosition([0., .3*i, 2.])
+            spawn_object.setMass(1.1)
             spawn_object.setContact(1)
 
         self.Model_Viewer.recopyMeshes(self.Model)
@@ -64,7 +68,8 @@ class Perceptor(object):
         # points = self.Simulation.depthData2pointCloud(values, self.fxfypxpy)
         points = self.Simulation.depthData2pointCloud(depth_mask, self.fxfypxpy)
         # self.current_object_points = [j for i in points for j in i if j[2]!=0]
-        self.current_object_points = [j for i in points for q,j in enumerate(i) if j[0]!=0 and j[1]!=0 and j[2]!=0 and q%2==0]
+        self.current_object_points = [j for i in points for q,j in enumerate(i) if j[0]!=0 and j[1]!=0 and j[2]!=0]
+        # self.current_object_points = [j for i in points for q,j in enumerate(i) if j[0]!=0 and j[1]!=0 and j[2]!=0 and q%2==0]
         self.camera_Frame.setPointCloud(points, rgb)
         self.Model_Viewer.recopyMeshes(self.Model)
         self.Model_Viewer.setConfiguration(self.Model)
@@ -108,7 +113,8 @@ class Perceptor(object):
         for i, position in enumerate(self.current_object_points):
                 obj_name = 'Point_object_{}'.format(i+1)
                 point_object = self.Model.addFrame(obj_name)
-                point_object.setShape(ry.ST.sphere, [.005])
+                point_object.setShape(ry.ST.sphere, [.0005])
+                # point_object.setShape(ry.ST.sphere, [.002])
                 self.Model.attach('camera', obj_name)
                 point_object.setRelativePosition(position)
                 self.no_point_objects += 1
@@ -116,18 +122,34 @@ class Perceptor(object):
         self.Model_Viewer.setConfiguration(self.Model)
 
 
+    def delete_cloud_objects(self):
+        for i in range(self.no_point_objects):
+            obj_name = 'Point_object_{}'.format(i+1)
+            self.Model.delFrame(obj_name)
+
+
     def optimize(self, obj_name):
         optimizer = self.Model.komo_path(1.,1,self.tau,True)
         optimizer.clearObjectives()
         optimizer.add_qControlObjective(order=1, scale=1e3)
-        optimizer.addSquaredQuaternionNorms(0., 1., 1e2)
-        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.eq, [1e2])
+        # optimizer.addSquaredQuaternionNorms(0., 1., 1e2)
+
         # optimizer.addObjective([], ry.FS.vectorY, [obj_name], ry.OT.eq, [1e2], order=1)
+
+        optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.sos, [1e2])
+        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.eq, [1e2])
+
+        # for i in range(99):
         for i in range(self.no_point_objects):
             point_name = 'Point_object_{}'.format(i+1)
-            optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e0], target = [.001])
+            optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e1 - i])
+            # optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e0])
+            # optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e0], target = [.0005])
 
         optimizer.optimize()
+
+        self.Model.setFrameState(optimizer.getConfiguration(0))
+        self.Model_Viewer.setConfiguration(self.Model)
 
         # print('#######################RESULT##################################')
 
@@ -137,17 +159,58 @@ class Perceptor(object):
         return optimizer
 
 
-    def spawn_object(self):
-        self.test_object = self.Model.addFrame('testtest') 
-        self.test_object.setShape(ry.ST.sphere, [0.02])
-        self.test_object.setColor([0,1,0])
-        self.test_object.setPosition([0,0.2,1.5])
-        self.test_object.setContact(1)
-        self.Model.makeObjectsFree(["testtest"])
+    def spawn_object(self, shape, size, position=[0,0.2,1.5], color=[1,0,0]):
+        object_name = shape + str(size)
+        self.new_object = self.Model.addFrame(object_name) 
+        self.Model.makeObjectsFree([object_name])
+        if type(size) is not list:
+            size_list = []
+            size_list.append(size)
+        else:
+            size_list = size
+        self.new_object.setShape(self.shape_dic[shape], size_list)
+        self.new_object.setColor(color)
+        self.new_object.setPosition(position)
+        self.new_object.setContact(1)
+        self.Model_Viewer.recopyMeshes(self.Model)
+        self.Model_Viewer.setConfiguration(self.Model)
+
+        return object_name
         # center = self.get_centers(1).tolist()
         # self.test_object.setPosition(center[0])
 
 
+
+    def find_best_fit(self):
+        smallest_error = None
+        sizes = np.arange(0.01, 0.1, 0.005)
+        for shape in self.shape_dic.keys():
+            for size in sizes:
+                if shape in ['box', 'capsule', 'cylinder']:
+                # if shape == 'box':
+                    size = [size, size, size]
+                name = self.spawn_object(shape, size)
+                opt = self.optimize(name)
+                # time.sleep(0.1)  
+
+                error = opt.getCosts()
+                if not smallest_error or error < smallest_error:
+                    smallest_error = error
+                    best_shape = shape
+                    best_size = size
+                    best_position = self.Model.frame(name).getPosition()
+
+                self.Model.delFrame(name)
+
+        print('##### OPTIMIZATION RESULT #####')
+        print('Best shape match: {}'.format(best_shape))
+        print('Best size match: {}'.format(best_size))
+        print('Best position match: {}'.format(best_position))
+
+        self.spawn_object(best_shape, best_size, best_position, color=[0,1,0])
+
+        return best_shape, best_size, best_position
+                              
 
 
 
@@ -166,26 +229,25 @@ if __name__ == "__main__":
 
 
 
-        if t==150:
+        if t==250:
             # centers = detector.get_centers(5).tolist()
             # print(len(centers))
             # detector.create_shapes(centers)
             detector.spawn_cloud_objects()
-            print(detector.RealWorld.frame('Sphere_1').getPosition())
+            # print(detector.RealWorld.frame('Sphere_1').getPosition())
             # print(detector.Model.getFrameNames())
 
-        if t==250:
-            detector.spawn_object()
-            test = detector.optimize('testtest')
-            print(test.getCosts())
-            detector.Model.setFrameState(test.getConfiguration(0))
-            detector.Model_Viewer.setConfiguration(detector.Model)
-            print(detector.test_object.getPosition())
+        if t==350:
+            detector.find_best_fit()
+            # print(detector.test_object.getPosition())
             # print(detector.Model.getFrameNames())
-            print('Model object position:')
-            print(detector.Model.getFrame('table').getPosition())
-            print('Real World object position:')
-            print(detector.RealWorld.frame('Sphere_1').getPosition())
+            # print('Model object position:')
+            # print(detector.Model.getFrame('table').getPosition())
+            # print('Real World object position:')
+            # print(detector.RealWorld.frame('Sphere_1').getPosition())
+
+        # if t==500:
+            # detector.delete_cloud_objects()
 
    
 
