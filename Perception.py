@@ -19,27 +19,34 @@ class Perceptor(object):
         self.Model_Viewer.setConfiguration(self.Model)
         self.camera_Frame = self.Model.frame('camera')
         self.no_obj = no_obj
-        self.reorder_objects(self.no_obj)
+        self._reorder_objects(self.no_obj)
         self.Simulation = self.RealWorld.simulation(ry.SimulatorEngine.physx, True)
         self.Simulation.addSensor('camera')
-        self.set_focal_length(0.895)
+        self._set_focal_length(0.895)
         self.tau = 0.01
         [self.background_rgb, self.background_depth] = self.Simulation.getImageAndDepth()
         self.background_gray = cv2.cvtColor(self.background_rgb, cv2.COLOR_BGR2GRAY)
-        self.shape_dic = {'sphere': ry.ST.sphere, 'box': ry.ST.box}
+        self._shape_dic = {'sphere': ry.ST.sphere, 'box': ry.ST.box}
         # self.shape_dic = {'sphere': ry.ST.sphere, 'box': ry.ST.box, 'capsule': ry.ST.capsule, 'cylinder': ry.ST.cylinder}
         print('Init successful!')
+        self.steps_taken = 0
+        self.open_gripper()
+        self.start_JV = self.Simulation.get_q()
 
 
-    def reorder_objects(self, no_obj):
+    def _reorder_objects(self, no_obj):
+        """
+        Method for deleting the objects in 'challenge.g' and respawning desired objects
+        """
+
         for i in range(0, 30):
             name = "obj%i" % i
             self.RealWorld.delFrame(name)
         for i in range(1, no_obj+1):
             obj_name = 'Sphere_{}'.format(i)
             spawn_object = self.RealWorld.addFrame(obj_name)
-            # spawn_object.setShape(ry.ST.sphere, [0.03])
-            spawn_object.setShape(ry.ST.box, [0.02, 0.02, 0.02])
+            # spawn_object.setShape(ry.ST.sphere, [0.04])
+            spawn_object.setShape(ry.ST.box, [0.04, 0.04, 0.04])
             spawn_object.setColor([1,0,0])
             spawn_object.setPosition([0., .3*i, 2.])
             spawn_object.setMass(1.1)
@@ -50,24 +57,35 @@ class Perceptor(object):
         # print(self.RealWorld.getFrameNames())
 
 
-    def set_focal_length(self, f):
+    def _set_focal_length(self, f):
         self.fxfypxpy = [f*360.0, f*360.0, 320., 180.]
 
     def update_binary_mask(self, image):
+        """
+        Checks which image pixels are different than the background image recorded at the start.
+        Writes resulting mask into a class attribute, so it may more easily be used by other methods.
+
+        Args:
+            image: Image to analyse.
+        """
+
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         background_diff = abs(self.background_gray - gray)
         _, self.bin_mask = cv2.threshold(background_diff, 0, 255, cv2.THRESH_BINARY)
 
     def update_point_cloud(self, rgb, depth):
+        """
+        Creates a point cloud in the model configuration based on received rgb and depth values.
+        Filters the points for non-zero coordinates and saves them to a class attribute, so it
+        may more easily be used by other methods.
+
+        Args:
+            rgb: An rgb image.
+            depth: The corresponding pixel-wise depth values.
+        """
+
         depth_mask = cv2.bitwise_and(depth, depth, mask=self.bin_mask)
-        # depth_indices = np.where(depth_mask>0)
-        # values = np.empty((depth_indices[0].shape[0], 3))
-        # values[:,0] = depth_indices[1]
-        # values[:,1] = depth_indices[0]
-        # values[:,2] = depth[depth_indices[0], depth_indices[1]]
-        # points = self.Simulation.depthData2pointCloud(values, self.fxfypxpy)
         points = self.Simulation.depthData2pointCloud(depth_mask, self.fxfypxpy)
-        # self.current_object_points = [j for i in points for j in i if j[2]!=0]
         self.current_object_points = [j for i in points for q,j in enumerate(i) if j[0]!=0 and j[1]!=0 and j[2]!=0]
         # self.current_object_points = [j for i in points for q,j in enumerate(i) if j[0]!=0 and j[1]!=0 and j[2]!=0 and q%2==0]
         self.camera_Frame.setPointCloud(points, rgb)
@@ -96,17 +114,6 @@ class Perceptor(object):
             # time.sleep(0.01)
             # print(self.Model.getFrameNames())
 
-    def move_pregrasp_unoccluded(self, target_object):
-        komo = self.RealWorld.komo_path(1, 20, 5., True)
-        komo.addObjective([1.], ry.FS.scalarProductXY, ['R_gripper', 'world'], ry.OT.eq, [1.], target=[1.])
-        z_target = [1/np.sqrt(2), 0, 1/np.sqrt(2)]
-        komo.addObjective([1.], ry.FS.vectorZ, ['R_gripper'], ry.OT.eq, [1.], target=z_target)
-        komo.addObjective([1.], ry.FS.positionDiff, ['R_gripper', target_object], ry.OT.eq, [1.], target=[0.2,0,0])
-        komo.optimize()
-        komo_viewer = komo.view()
-        time.sleep(10)
-        # komo_viewer.playVideo(delay=0.1)
-
 
     def spawn_cloud_objects(self):
         self.no_point_objects = 0
@@ -114,6 +121,8 @@ class Perceptor(object):
                 obj_name = 'Point_object_{}'.format(i+1)
                 point_object = self.Model.addFrame(obj_name)
                 point_object.setShape(ry.ST.sphere, [.0005])
+                # if i == 20:
+                    # point_object.setColor([0, 0, 1])
                 # point_object.setShape(ry.ST.sphere, [.002])
                 self.Model.attach('camera', obj_name)
                 point_object.setRelativePosition(position)
@@ -132,30 +141,27 @@ class Perceptor(object):
         optimizer = self.Model.komo_path(1.,1,self.tau,True)
         optimizer.clearObjectives()
         optimizer.add_qControlObjective(order=1, scale=1e3)
-        # optimizer.addSquaredQuaternionNorms(0., 1., 1e2)
+        optimizer.addSquaredQuaternionNorms(0., 1., 1e2)
 
         # optimizer.addObjective([], ry.FS.vectorY, [obj_name], ry.OT.eq, [1e2], order=1)
 
-        optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.sos, [1e2])
-        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.eq, [1e2])
+        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.sos, [1e2])
+        optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.eq, [1e2], target=[0.0001])
+        optimizer.addObjective([1.], ry.FS.quaternionDiff, [obj_name, 'world'], ry.OT.eq, [1e2])
+        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, "Point_object_21"], ry.OT.eq, [1e4])
 
         # for i in range(99):
         for i in range(self.no_point_objects):
             point_name = 'Point_object_{}'.format(i+1)
-            optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e1 - i])
-            # optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e0])
-            # optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e0], target = [.0005])
+            # optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e1 - (i*10/self.no_point_objects)])
+            optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e0], target=[-0.0005])
+            # optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e1 - i])
 
         optimizer.optimize()
 
         self.Model.setFrameState(optimizer.getConfiguration(0))
         self.Model_Viewer.setConfiguration(self.Model)
 
-        # print('#######################RESULT##################################')
-
-        # print(optimizer.getConfiguration(0))
-        # print(optimizer.getReport())
-        # return optimizer.getCosts()
         return optimizer
 
 
@@ -168,7 +174,7 @@ class Perceptor(object):
             size_list.append(size)
         else:
             size_list = size
-        self.new_object.setShape(self.shape_dic[shape], size_list)
+        self.new_object.setShape(self._shape_dic[shape], size_list)
         self.new_object.setColor(color)
         self.new_object.setPosition(position)
         self.new_object.setContact(1)
@@ -179,85 +185,177 @@ class Perceptor(object):
         # center = self.get_centers(1).tolist()
         # self.test_object.setPosition(center[0])
 
-
-
+                           
     def find_best_fit(self):
         smallest_error = None
-        sizes = np.arange(0.01, 0.1, 0.005)
-        for shape in self.shape_dic.keys():
+        sizes = np.arange(0.01, 0.05, 0.002)
+        print(f'Finding best match among {len(self._shape_dic)} shapes, trying {len(sizes)} sizes.')
+        for shape in self._shape_dic.keys():
+            previous_error = 0
             for size in sizes:
                 if shape in ['box', 'capsule', 'cylinder']:
-                # if shape == 'box':
                     size = [size, size, size]
                 name = self.spawn_object(shape, size)
                 opt = self.optimize(name)
                 # time.sleep(0.1)  
 
-                error = opt.getCosts()
-                if not smallest_error or error < smallest_error:
-                    smallest_error = error
-                    best_shape = shape
-                    best_size = size
-                    best_position = self.Model.frame(name).getPosition()
+                current_error = opt.getCosts()
+
+                # First condition: Error starts increasing for the current shape.
+                # That means the current size is the best fit for the given shape.
+                if current_error > previous_error and previous_error != 0:
+                    # Second condition: the smallest error of the current shape is less than the smallest
+                    # error of any shape that came before.
+                    if not smallest_error or previous_error < smallest_error:
+                        smallest_error = previous_error
+                        best_shape = previous_shape
+                        best_size = previous_size
+                        best_position = previous_position
+                        self.Model.delFrame(name)
+                        break
+
+                previous_error = current_error
+                previous_shape = shape
+                previous_size = size
+                previous_position = self.Model.frame(name).getPosition()
 
                 self.Model.delFrame(name)
 
-        print('##### OPTIMIZATION RESULT #####')
-        print('Best shape match: {}'.format(best_shape))
-        print('Best size match: {}'.format(best_size))
-        print('Best position match: {}'.format(best_position))
+        print(colored('################## OPTIMIZATION RESULTS ##################', color='green', attrs=['bold']))
+        print(colored('Best shape match: {}'.format(best_shape), color='white', attrs=['bold']))
+        print(colored('Best size match: {}'.format(best_size), color='white', attrs=['bold']))
+        print(colored('Best position match: {}'.format(best_position), color='white', attrs=['bold']))
+        print(colored('Error for best match: {}'.format(smallest_error), color='white', attrs=['bold']))
+        print(colored('##########################################################', color='green', attrs=['bold']))
+        
 
-        self.spawn_object(best_shape, best_size, best_position, color=[0,1,0])
+        name = self.spawn_object(best_shape, best_size, best_position, color=[0,1,0])
 
-        return best_shape, best_size, best_position
-                              
-
-
+        return name, best_shape
+        # return best_shape, best_size, best_position
 
 
+    def open_gripper(self):
+        self.Simulation.openGripper("R_gripper")
+        # self.Model.attach("world", "object")
+        for i in range(50):
+            time.sleep(self.tau)
+            self.Simulation.step([], self.tau, ry.ControlMode.none)
+            self.Model.setJointState(self.Simulation.get_q())
+            self.Model_Viewer.setConfiguration(self.Model)
+            self.gripper_open = True
+            self.steps_taken += 1
+
+    def grasp(self, shape):
+        self.Simulation.closeGripper("R_gripper")
+        print('Attempting to grasp object...')
+        while True:
+            time.sleep(self.tau)
+            self.Simulation.step([], self.tau, ry.ControlMode.none)
+            self.Model.setJointState(self.Simulation.get_q())
+            self.Model_Viewer.setConfiguration(self.Model)
+            self.steps_taken += 1
+            if self.Simulation.getGripperIsGrasping("R_gripper"): 
+                # self.Model.attach("R_gripper", "object")
+                print(colored(f'Grasped a {shape}!', color='yellow', attrs=['blink', 'bold']))
+                return True
+            if self.Simulation.getGripperWidth("R_gripper") < -0.05 and self.gripper_open: 
+                print('Gripper closed, nothing grasped.')
+                self.gripper_open = False
+                self.open_gripper()
+                return False
+
+    def move_to_target_pre_grasp(self, target_name, **kwargs):
+        n_steps = 50
+        self.Model.attach("world", target_name)
+
+        self.Model.setJointState(self.Simulation.get_q())
+        planner = self.Model.komo_path(1., n_steps, n_steps*self.tau, True)
+        planner.addObjective([1.], ry.FS.positionDiff, ["R_gripperCenter", target_name], ry.OT.eq, [2e1], target=[0,0,0.1])
+        planner.addObjective([1.], ry.FS.vectorZ, ["R_gripperCenter"], ry.OT.eq, scale=[1e1], target=[0,0,1]);
+        planner.addObjective([1.], ry.FS.scalarProductYX, ["R_gripperCenter", target_name], ry.OT.eq);
+        planner.addObjective([1.], ry.FS.scalarProductYY, ["R_gripperCenter", target_name], ry.OT.eq);
+        planner.addObjective([], ry.FS.accumulatedCollisions, type=ry.OT.ineq, scale=[1e1])
+        planner.addObjective([], ry.FS.qItself, ["R_finger1"], ry.OT.eq, [1e1], order=1)
+        planner.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1)
+        planner.optimize()
+        for t in range(n_steps):
+            self.Model.setFrameState(planner.getConfiguration(t))
+            q = self.Model.getJointState()
+            time.sleep(self.tau)
+            self.Simulation.step(q, self.tau, ry.ControlMode.position)
+            self.Model_Viewer.setConfiguration(self.Model)
+            self.steps_taken += 1
+
+
+    def move_down(self):
+        n_steps = 20
+        self.Model.setJointState(self.Simulation.get_q())
+        planner = self.Model.komo_path(1., n_steps, n_steps*self.tau, True)
+        target = self.Model.getFrame("R_gripperCenter").getPosition()
+        target[-1] -= 0.1
+        planner.addObjective([1.], ry.FS.position, ["R_gripperCenter"], ry.OT.eq, [2e1], target=target)
+        planner.addObjective([], ry.FS.quaternion, ["R_gripperCenter"], ry.OT.eq, scale=[1e1], order=1)
+        planner.addObjective([], ry.FS.accumulatedCollisions, type=ry.OT.ineq, scale=[1e1])
+        planner.addObjective([], ry.FS.qItself, ["R_finger1"], ry.OT.eq, [1e1], order=1)
+        planner.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1)
+        planner.optimize()
+        for t in range(n_steps):
+            self.Model.setFrameState(planner.getConfiguration(t))
+            q = self.Model.getJointState()
+            time.sleep(self.tau)
+            self.Simulation.step(q, self.tau, ry.ControlMode.position)
+            self.Model_Viewer.setConfiguration(self.Model)
+            self.steps_taken += 1
+
+
+    def move_to_start(self):
+        n_steps = 30
+        self.Model.setJointState(self.Simulation.get_q())
+        planner = self.Model.komo_path(1., n_steps, n_steps*self.tau, True)
+        planner.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [2e1], target=self.start_JV)
+        planner.addObjective([], ry.FS.accumulatedCollisions, type=ry.OT.ineq, scale=[1e1])
+        planner.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1)
+        planner.optimize()
+        for t in range(n_steps):
+            self.Model.setFrameState(planner.getConfiguration(t))
+            q = self.Model.getJointState()
+            self.Simulation.step(q, self.tau, ry.ControlMode.position)
+            self.Model_Viewer.setConfiguration(self.Model)
+            self.steps_taken += 1
+            time.sleep(self.tau)
+
+
+    def grasp_object(self, target_name, target_shape):
+        self.move_to_target_pre_grasp(target_name=target_name)
+        self.move_down()
+        self.grasp(shape=target_shape)
+        self.move_to_start()
 
 if __name__ == "__main__":
     detector = Perceptor(1)
 
+    print(len(detector.Simulation.get_q()))
+    print(len(detector.Model.getJointState()))
+
     for t in range(2000):
-        # time.sleep(0.01)
 
         if t%10 == 0:
             [rgb, depth] = detector.Simulation.getImageAndDepth() 
             detector.update_binary_mask(rgb)
             detector.update_point_cloud(rgb, depth)
 
-
-
-        if t==250:
-            # centers = detector.get_centers(5).tolist()
-            # print(len(centers))
-            # detector.create_shapes(centers)
+        if t==150:
             detector.spawn_cloud_objects()
-            # print(detector.RealWorld.frame('Sphere_1').getPosition())
-            # print(detector.Model.getFrameNames())
 
-        if t==350:
-            detector.find_best_fit()
-            # print(detector.test_object.getPosition())
-            # print(detector.Model.getFrameNames())
-            # print('Model object position:')
-            # print(detector.Model.getFrame('table').getPosition())
-            # print('Real World object position:')
-            # print(detector.RealWorld.frame('Sphere_1').getPosition())
+        if t==180:
+            name, shape = detector.find_best_fit()
 
-        # if t==500:
-            # detector.delete_cloud_objects()
+        if t==200:
+            detector.delete_cloud_objects()
 
-   
+            detector.grasp_object(target_name=name, target_shape=shape)
 
         detector.step()
 
-    # detector.move_pregrasp_unoccluded('Sphere_1')
-
-
-    # cv2.imshow('asldf', detector.background_gray)
-    # cv2.imshow('rgb', detector.background_rgb)
-    # cv2.waitKey(0)
-    # # time.sleep(6)
-    # cv2.destroyAllWindows()    
+    
