@@ -6,11 +6,18 @@ import cv2
 import numpy as np
 from sklearn.cluster import KMeans
 from termcolor import colored
+import random
 
 
 class Perceptor(object):
     def __init__(self, no_obj):
 
+        # self._shape_dic = {'sphere': [ry.ST.sphere, 1], 'box': [ry.ST.box, 3]}
+        self._shape_dic = {'sphere': [ry.ST.sphere, 1], 'box': [ry.ST.box, 3], 'capsule': [ry.ST.capsule, 3], 'cylinder': [ry.ST.cylinder, 3]}
+        self.steps_taken = 0
+        self.sizes = np.arange(0.01, 0.05, 0.002)
+        self.positions = np.arange(-0.5, 0.55, 0.05)
+        self.objects_spawned = 0
         self.RealWorld = ry.Config()
         self.RealWorld.addFile("../../scenarios/challenge.g")
         self.Model = ry.Config()
@@ -19,22 +26,23 @@ class Perceptor(object):
         self.Model_Viewer.setConfiguration(self.Model)
         self.camera_Frame = self.Model.frame('camera')
         self.no_obj = no_obj
-        self._reorder_objects(self.no_obj)
+        self._reorder_objects()
+        # for _ in range(self.no_obj):
+            # self.spawn_random_object()
         self.Simulation = self.RealWorld.simulation(ry.SimulatorEngine.physx, True)
         self.Simulation.addSensor('camera')
         self._set_focal_length(0.895)
         self.tau = 0.01
         [self.background_rgb, self.background_depth] = self.Simulation.getImageAndDepth()
         self.background_gray = cv2.cvtColor(self.background_rgb, cv2.COLOR_BGR2GRAY)
-        self._shape_dic = {'sphere': ry.ST.sphere, 'box': ry.ST.box}
-        # self.shape_dic = {'sphere': ry.ST.sphere, 'box': ry.ST.box, 'capsule': ry.ST.capsule, 'cylinder': ry.ST.cylinder}
-        print('Init successful!')
-        self.steps_taken = 0
+      
         self.open_gripper()
         self.start_JV = self.Simulation.get_q()
+        
+        print('Init successful!')
 
 
-    def _reorder_objects(self, no_obj):
+    def _reorder_objects(self):
         """
         Method for deleting the objects in 'challenge.g' and respawning desired objects
         """
@@ -42,11 +50,11 @@ class Perceptor(object):
         for i in range(0, 30):
             name = "obj%i" % i
             self.RealWorld.delFrame(name)
-        for i in range(1, no_obj+1):
+        for i in range(1, self.no_obj+1):
             obj_name = 'Sphere_{}'.format(i)
             spawn_object = self.RealWorld.addFrame(obj_name)
-            # spawn_object.setShape(ry.ST.sphere, [0.04])
-            spawn_object.setShape(ry.ST.box, [0.04, 0.04, 0.04])
+            spawn_object.setShape(ry.ST.sphere, [0.04])
+        #     spawn_object.setShape(ry.ST.box, [0.04, 0.04, 0.04])
             spawn_object.setColor([1,0,0])
             spawn_object.setPosition([0., .3*i, 2.])
             spawn_object.setMass(1.1)
@@ -174,7 +182,7 @@ class Perceptor(object):
             size_list.append(size)
         else:
             size_list = size
-        self.new_object.setShape(self._shape_dic[shape], size_list)
+        self.new_object.setShape(self._shape_dic[shape][0], size_list)
         self.new_object.setColor(color)
         self.new_object.setPosition(position)
         self.new_object.setContact(1)
@@ -188,11 +196,11 @@ class Perceptor(object):
                            
     def find_best_fit(self):
         smallest_error = None
-        sizes = np.arange(0.01, 0.05, 0.002)
-        print(f'Finding best match among {len(self._shape_dic)} shapes, trying {len(sizes)} sizes.')
+        
+        print(f'Finding best match among {len(self._shape_dic)} shapes, trying {len(self.sizes)} sizes.')
         for shape in self._shape_dic.keys():
             previous_error = 0
-            for size in sizes:
+            for size in self.sizes:
                 if shape in ['box', 'capsule', 'cylinder']:
                     size = [size, size, size]
                 name = self.spawn_object(shape, size)
@@ -270,17 +278,17 @@ class Perceptor(object):
         self.Model.attach("world", target_name)
 
         self.Model.setJointState(self.Simulation.get_q())
-        planner = self.Model.komo_path(1., n_steps, n_steps*self.tau, True)
-        planner.addObjective([1.], ry.FS.positionDiff, ["R_gripperCenter", target_name], ry.OT.eq, [2e1], target=[0,0,0.1])
-        planner.addObjective([1.], ry.FS.vectorZ, ["R_gripperCenter"], ry.OT.eq, scale=[1e1], target=[0,0,1]);
-        planner.addObjective([1.], ry.FS.scalarProductYX, ["R_gripperCenter", target_name], ry.OT.eq);
-        planner.addObjective([1.], ry.FS.scalarProductYY, ["R_gripperCenter", target_name], ry.OT.eq);
-        planner.addObjective([], ry.FS.accumulatedCollisions, type=ry.OT.ineq, scale=[1e1])
-        planner.addObjective([], ry.FS.qItself, ["R_finger1"], ry.OT.eq, [1e1], order=1)
-        planner.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1)
-        planner.optimize()
+        planer = self.Model.komo_path(1., n_steps, n_steps*self.tau, True)
+        planer.addObjective([1.], ry.FS.positionDiff, ["R_gripperCenter", target_name], ry.OT.eq, [2e1], target=[0,0,0.1])
+        planer.addObjective([1.], ry.FS.vectorZ, ["R_gripperCenter"], ry.OT.eq, scale=[1e1], target=[0,0,1]);
+        planer.addObjective([1.], ry.FS.scalarProductYX, ["R_gripperCenter", target_name], ry.OT.eq);
+        planer.addObjective([1.], ry.FS.scalarProductYY, ["R_gripperCenter", target_name], ry.OT.eq);
+        planer.addObjective([], ry.FS.accumulatedCollisions, type=ry.OT.ineq, scale=[1e1])
+        planer.addObjective([], ry.FS.qItself, ["R_finger1"], ry.OT.eq, [1e1], order=1)
+        planer.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1)
+        planer.optimize()
         for t in range(n_steps):
-            self.Model.setFrameState(planner.getConfiguration(t))
+            self.Model.setFrameState(planer.getConfiguration(t))
             q = self.Model.getJointState()
             time.sleep(self.tau)
             self.Simulation.step(q, self.tau, ry.ControlMode.position)
@@ -291,17 +299,17 @@ class Perceptor(object):
     def move_down(self):
         n_steps = 20
         self.Model.setJointState(self.Simulation.get_q())
-        planner = self.Model.komo_path(1., n_steps, n_steps*self.tau, True)
+        planer = self.Model.komo_path(1., n_steps, n_steps*self.tau, True)
         target = self.Model.getFrame("R_gripperCenter").getPosition()
         target[-1] -= 0.1
-        planner.addObjective([1.], ry.FS.position, ["R_gripperCenter"], ry.OT.eq, [2e1], target=target)
-        planner.addObjective([], ry.FS.quaternion, ["R_gripperCenter"], ry.OT.eq, scale=[1e1], order=1)
-        planner.addObjective([], ry.FS.accumulatedCollisions, type=ry.OT.ineq, scale=[1e1])
-        planner.addObjective([], ry.FS.qItself, ["R_finger1"], ry.OT.eq, [1e1], order=1)
-        planner.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1)
-        planner.optimize()
+        planer.addObjective([1.], ry.FS.position, ["R_gripperCenter"], ry.OT.eq, [2e1], target=target)
+        planer.addObjective([], ry.FS.quaternion, ["R_gripperCenter"], ry.OT.eq, scale=[1e1], order=1)
+        planer.addObjective([], ry.FS.accumulatedCollisions, type=ry.OT.ineq, scale=[1e1])
+        planer.addObjective([], ry.FS.qItself, ["R_finger1"], ry.OT.eq, [1e1], order=1)
+        planer.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1)
+        planer.optimize()
         for t in range(n_steps):
-            self.Model.setFrameState(planner.getConfiguration(t))
+            self.Model.setFrameState(planer.getConfiguration(t))
             q = self.Model.getJointState()
             time.sleep(self.tau)
             self.Simulation.step(q, self.tau, ry.ControlMode.position)
@@ -312,13 +320,33 @@ class Perceptor(object):
     def move_to_start(self):
         n_steps = 30
         self.Model.setJointState(self.Simulation.get_q())
-        planner = self.Model.komo_path(1., n_steps, n_steps*self.tau, True)
-        planner.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [2e1], target=self.start_JV)
-        planner.addObjective([], ry.FS.accumulatedCollisions, type=ry.OT.ineq, scale=[1e1])
-        planner.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1)
-        planner.optimize()
+        planer = self.Model.komo_path(1., n_steps, n_steps*self.tau, True)
+        planer.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [2e1], target=self.start_JV)
+        planer.addObjective([], ry.FS.accumulatedCollisions, type=ry.OT.ineq, scale=[1e1])
+        planer.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1)
+        planer.optimize()
         for t in range(n_steps):
-            self.Model.setFrameState(planner.getConfiguration(t))
+            self.Model.setFrameState(planer.getConfiguration(t))
+            q = self.Model.getJointState()
+            self.Simulation.step(q, self.tau, ry.ControlMode.position)
+            self.Model_Viewer.setConfiguration(self.Model)
+            self.steps_taken += 1
+            time.sleep(self.tau)
+
+    def place_object(self, target_shape):
+        if target_shape == 'sphere':
+            target = [0.5, -1.3, 0.8]
+        else:
+            target = [0.6, 0.1, 0.8]
+        n_steps = 30
+        self.Model.setJointState(self.Simulation.get_q())
+        planer = self.Model.komo_path(1., n_steps, n_steps*self.tau, True)
+        planer.addObjective([1.], ry.FS.position, ['R_gripperCenter'], type=ry.OT.eq, scale=[2e1], target=target)
+        planer.addObjective([], ry.FS.accumulatedCollisions, type=ry.OT.ineq, scale=[1e1])
+        planer.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1)
+        planer.optimize()
+        for t in range(n_steps):
+            self.Model.setFrameState(planer.getConfiguration(t))
             q = self.Model.getJointState()
             self.Simulation.step(q, self.tau, ry.ControlMode.position)
             self.Model_Viewer.setConfiguration(self.Model)
@@ -326,17 +354,44 @@ class Perceptor(object):
             time.sleep(self.tau)
 
 
-    def grasp_object(self, target_name, target_shape):
+    def pick_and_place_object(self, target_name, target_shape):
         self.move_to_target_pre_grasp(target_name=target_name)
         self.move_down()
         self.grasp(shape=target_shape)
         self.move_to_start()
+        time.sleep(0.5)
+        self.place_object(target_shape=target_shape)
+        self.open_gripper()
+        self.move_to_start()
+
+
+    def spawn_random_object(self):
+        shapes = list(self._shape_dic.keys())
+        shape = random.choice(shapes)
+        size = []
+        for i in range(3):
+        # for i in range(self._shape_dic[shape][1]):
+            size.append(random.choice(self.sizes))
+        position = []
+        position.append(random.choice(self.positions))
+        position.append(random.choice(self.positions))
+        position.append(1.5)
+
+        self.objects_spawned += 1
+
+        obj_name = 'Object_{}'.format(self.objects_spawned)
+        spawn_object = self.RealWorld.addFrame(obj_name)
+        spawn_object.setShape(ry.ST.box, size)
+        # spawn_object.setShape(self._shape_dic[shape][0], size)
+        spawn_object.setColor([1,0,0])
+        spawn_object.setPosition(position)
+        spawn_object.setMass(1.1)
+        spawn_object.setContact(1)
+        self.Model_Viewer.recopyMeshes(self.Model)
+        self.Model_Viewer.setConfiguration(self.Model)
 
 if __name__ == "__main__":
     detector = Perceptor(1)
-
-    print(len(detector.Simulation.get_q()))
-    print(len(detector.Model.getJointState()))
 
     for t in range(2000):
 
@@ -348,13 +403,14 @@ if __name__ == "__main__":
         if t==150:
             detector.spawn_cloud_objects()
 
-        if t==180:
+        if t==480:
             name, shape = detector.find_best_fit()
 
-        if t==200:
-            detector.delete_cloud_objects()
+        # if t==200:
+            # detector.delete_cloud_objects()
 
-            detector.grasp_object(target_name=name, target_shape=shape)
+        # if t==220:
+            # detector.pick_and_place_object(target_name=name, target_shape=shape)
 
         detector.step()
 
