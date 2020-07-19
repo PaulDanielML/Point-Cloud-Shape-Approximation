@@ -3,43 +3,51 @@ sys.path.append('../../build')
 import libry as ry
 import time 
 import cv2
+import copy
 import numpy as np
 from sklearn.cluster import KMeans
 from termcolor import colored
 import random
+from decorators import *
 
 
 class Perceptor(object):
-    def __init__(self, no_obj):
 
-        # self._shape_dic = {'sphere': [ry.ST.sphere, 1], 'box': [ry.ST.box, 3]}
-        self._shape_dic = {'sphere': [ry.ST.sphere, 1], 'box': [ry.ST.box, 3], 'capsule': [ry.ST.capsule, 3], 'cylinder': [ry.ST.cylinder, 3]}
+    def __init__(self, no_obj):
+        self.no_obj = no_obj
+        # self._shape_dic = {'cylinder': [ry.ST.cylinder, 2]}
+        self._shape_dic = {'sphere': [ry.ST.sphere, 1], 'box': [ry.ST.box, 3], 'cylinder': [ry.ST.cylinder, 2]}
+        # self._shape_dic = {'sphere': [ry.ST.sphere, 1], 'box': [ry.ST.box, 3], 'capsule': [ry.ST.capsule, 3], 'cylinder': [ry.ST.cylinder, 3]}
         self.steps_taken = 0
-        self.sizes = np.arange(0.01, 0.05, 0.002)
-        self.positions = np.arange(-0.5, 0.55, 0.05)
+        self.sizes = np.arange(0.012, 0.06, 0.001)
+        # self.sizes = np.arange(0.012, 0.05, 0.002)
+        self.positions = np.arange(-0.3, 0.35, 0.05)
+        self.object_indices = np.arange(1, self.no_obj+1)
         self.objects_spawned = 0
         self.RealWorld = ry.Config()
         self.RealWorld.addFile("../../scenarios/challenge.g")
         self.Model = ry.Config()
-        self.Model.addFile('../../scenarios/pandasTable.g')
+        self.Model.addFile('../../scenarios/pandasTable_2.g')
         self.Model_Viewer = ry.ConfigurationViewer()
         self.Model_Viewer.setConfiguration(self.Model)
         self.camera_Frame = self.Model.frame('camera')
-        self.no_obj = no_obj
         self._reorder_objects()
-        # for _ in range(self.no_obj):
-            # self.spawn_random_object()
+        for _ in range(self.no_obj):
+            self.spawn_random_object()
         self.Simulation = self.RealWorld.simulation(ry.SimulatorEngine.physx, True)
         self.Simulation.addSensor('camera')
         self._set_focal_length(0.895)
         self.tau = 0.01
         [self.background_rgb, self.background_depth] = self.Simulation.getImageAndDepth()
         self.background_gray = cv2.cvtColor(self.background_rgb, cv2.COLOR_BGR2GRAY)
-      
         self.open_gripper()
         self.start_JV = self.Simulation.get_q()
-        
+
         print('Init successful!')
+
+
+    def __repr__(self):
+        return f'Perceptor({self.no_obj} Objects)'
 
 
     def _reorder_objects(self):
@@ -50,23 +58,25 @@ class Perceptor(object):
         for i in range(0, 30):
             name = "obj%i" % i
             self.RealWorld.delFrame(name)
-        for i in range(1, self.no_obj+1):
-            obj_name = 'Sphere_{}'.format(i)
-            spawn_object = self.RealWorld.addFrame(obj_name)
-            spawn_object.setShape(ry.ST.sphere, [0.04])
-        #     spawn_object.setShape(ry.ST.box, [0.04, 0.04, 0.04])
-            spawn_object.setColor([1,0,0])
-            spawn_object.setPosition([0., .3*i, 2.])
-            spawn_object.setMass(1.1)
-            spawn_object.setContact(1)
+        # for i in range(1, self.no_obj+1):
+        #     obj_name = 'Sphere_{}'.format(i)
+        #     spawn_object = self.RealWorld.addFrame(obj_name)
+        #     # spawn_object.setShape(ry.ST.sphere, [0.04])
+        #     # spawn_object.setShape(ry.ST.box, [0.04, 0.04, 0.04])
+        #     spawn_object.setShape(ry.ST.cylinder, [0.04, 0.04])
+        #     spawn_object.setColor([1,0,0])
+        #     spawn_object.setPosition([-0.3, 0.3, 2.])
+        #     spawn_object.setMass(1.1)
+        #     spawn_object.setContact(1)
 
-        self.Model_Viewer.recopyMeshes(self.Model)
-        self.Model_Viewer.setConfiguration(self.Model)
+        # self.Model_Viewer.recopyMeshes(self.Model)
+        # self.Model_Viewer.setConfiguration(self.Model)
         # print(self.RealWorld.getFrameNames())
 
 
     def _set_focal_length(self, f):
         self.fxfypxpy = [f*360.0, f*360.0, 320., 180.]
+
 
     def update_binary_mask(self, image):
         """
@@ -81,6 +91,7 @@ class Perceptor(object):
         background_diff = abs(self.background_gray - gray)
         _, self.bin_mask = cv2.threshold(background_diff, 0, 255, cv2.THRESH_BINARY)
 
+
     def update_point_cloud(self, rgb, depth):
         """
         Creates a point cloud in the model configuration based on received rgb and depth values.
@@ -94,19 +105,29 @@ class Perceptor(object):
 
         depth_mask = cv2.bitwise_and(depth, depth, mask=self.bin_mask)
         points = self.Simulation.depthData2pointCloud(depth_mask, self.fxfypxpy)
-        self.current_object_points = [j for i in points for q,j in enumerate(i) if j[0]!=0 and j[1]!=0 and j[2]!=0]
-        # self.current_object_points = [j for i in points for q,j in enumerate(i) if j[0]!=0 and j[1]!=0 and j[2]!=0 and q%2==0]
+        # print(f'min x value: {np.min(points[:,:,0])}')
+        # print(f'max x value: {np.max(points[:,:,0])}')
+        # print(f'min y value: {np.min(points[:,:,1])}')
+        # print(f'max x value: {np.max(points[:,:,1])}')
+        self.current_object_points = [j for i in points for q,j in enumerate(i) if j[0]!=0 and j[1]!=0 and j[2]!=0 \
+                                       and j[2]>-2.0 and j[0] > -0.35 and j[0] < 0.35 and j[1] > -0.45 and j[1] < 0.1]
         self.camera_Frame.setPointCloud(points, rgb)
         self.Model_Viewer.recopyMeshes(self.Model)
         self.Model_Viewer.setConfiguration(self.Model)
 
-    def step(self):
-        self.Simulation.step([], self.tau, ry.ControlMode.none)
+
+    def step(self, no_steps=1):
+        for _ in range(no_steps):
+            self.Simulation.step([], self.tau, ry.ControlMode.none)
+            time.sleep(self.tau)
+            self.steps_taken += 1
+
 
     def get_centers(self, no_objects):
         kmeans = KMeans(n_clusters=no_objects).fit(self.current_object_points)
         return kmeans.cluster_centers_
         # return np.mean(self.current_object_points, axis=0)
+
 
     def create_shapes(self, centers):
         for i, center in enumerate(centers):
@@ -123,9 +144,19 @@ class Perceptor(object):
             # print(self.Model.getFrameNames())
 
 
+    @debug
     def spawn_cloud_objects(self):
         self.no_point_objects = 0
+        self.point_object_list = []
+        print(len(self.current_object_points))
+        if len(self.current_object_points) > 150:
+            spawn_every = 2
+        else:
+            spawn_every = 1
+
         for i, position in enumerate(self.current_object_points):
+
+            if i%spawn_every==0:
                 obj_name = 'Point_object_{}'.format(i+1)
                 point_object = self.Model.addFrame(obj_name)
                 point_object.setShape(ry.ST.sphere, [.0005])
@@ -135,35 +166,77 @@ class Perceptor(object):
                 self.Model.attach('camera', obj_name)
                 point_object.setRelativePosition(position)
                 self.no_point_objects += 1
+                self.point_object_list.append(obj_name)
         self.Model_Viewer.recopyMeshes(self.Model)
         self.Model_Viewer.setConfiguration(self.Model)
 
+        return {'Number of cloud objects spawned': self.no_point_objects}
+
+
 
     def delete_cloud_objects(self):
-        for i in range(self.no_point_objects):
-            obj_name = 'Point_object_{}'.format(i+1)
-            self.Model.delFrame(obj_name)
+        for name in self.point_object_list :
+            self.Model.delFrame(name)
 
 
     def optimize(self, obj_name):
         optimizer = self.Model.komo_path(1.,1,self.tau,True)
         optimizer.clearObjectives()
-        optimizer.add_qControlObjective(order=1, scale=1e3)
-        optimizer.addSquaredQuaternionNorms(0., 1., 1e2)
+        optimizer.add_qControlObjective(order=1, scale=1e3)#
+        optimizer.addSquaredQuaternionNorms(0., 1., 1e2)#
 
-        # optimizer.addObjective([], ry.FS.vectorY, [obj_name], ry.OT.eq, [1e2], order=1)
+        optimizer.addObjective([], ry.FS.vectorY, [obj_name], ry.OT.eq, [1e2], order=1)
 
-        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.sos, [1e2])
+        optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.eq, [1e4], target=[0.0001])
+        optimizer.addObjective([1.], ry.FS.quaternionDiff, [obj_name, 'world'], ry.OT.eq, [1e2])#
+        middle_index = self.no_point_objects//2
+        middle_point = 'Point_object_{}'.format(middle_index)
+        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, middle_point], ry.OT.eq, [1e4])
+
+        # points = np.array(self.current_object_points)
+
+        # x = points[:,0]
+        # y = points[:,1]
+
+        # x_min = np.argmin(x) + 1
+        # x_max = np.argmax(x) + 1
+
+        # y_min = np.argmin(y) + 1
+        # y_max = np.argmax(y) + 1
+
+        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, f'Point_object_{x_min}'], ry.OT.sos, [1e3], target=[-0.0005])
+        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, f'Point_object_{x_max}'], ry.OT.sos, [1e3], target=[-0.0005])
+        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, f'Point_object_{y_min}'], ry.OT.sos, [1e3], target=[-0.0005])
+        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, f'Point_object_{y_max}'], ry.OT.sos, [1e3], target=[-0.0005])
+
+
+        for name in self.point_object_list:
+            # point_name = 'Point_object_{}'.format(i+1)
+            optimizer.addObjective([1.], ry.FS.distance, [obj_name, name], ry.OT.sos, [3e0], target=[-0.0005])
+
+        optimizer.optimize()
+
+        self.Model.setFrameState(optimizer.getConfiguration(0))
+        self.Model_Viewer.setConfiguration(self.Model)
+
+        return optimizer
+
+
+    def optimize_old(self, obj_name):
+        optimizer = self.Model.komo_path(1.,1,self.tau,True)
+        optimizer.clearObjectives()
+        optimizer.add_qControlObjective(order=1, scale=1e3)#
+        optimizer.addSquaredQuaternionNorms(0., 1., 1e2)#
+
+        optimizer.addObjective([], ry.FS.vectorY, [obj_name], ry.OT.eq, [1e2], order=1)
+
         optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.eq, [1e2], target=[0.0001])
-        optimizer.addObjective([1.], ry.FS.quaternionDiff, [obj_name, 'world'], ry.OT.eq, [1e2])
-        # optimizer.addObjective([1.], ry.FS.distance, [obj_name, "Point_object_21"], ry.OT.eq, [1e4])
+        optimizer.addObjective([1.], ry.FS.quaternionDiff, [obj_name, 'world'], ry.OT.eq, [1e2])#
 
         # for i in range(99):
         for i in range(self.no_point_objects):
             point_name = 'Point_object_{}'.format(i+1)
-            # optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e1 - (i*10/self.no_point_objects)])
-            optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e0], target=[-0.0005])
-            # optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [1e1 - i])
+            optimizer.addObjective([1.], ry.FS.distance, [obj_name, point_name], ry.OT.sos, [3e0], target=[-0.0005])
 
         optimizer.optimize()
 
@@ -194,40 +267,75 @@ class Perceptor(object):
         # self.test_object.setPosition(center[0])
 
                            
-    def find_best_fit(self):
+    def find_best_fit(self, error_threshold=0.05):
         smallest_error = None
         
-        print(f'Finding best match among {len(self._shape_dic)} shapes, trying {len(self.sizes)} sizes.')
+        print(f'Finding best match among {len(self._shape_dic)} shapes, trying max. of {len(self.sizes)} sizes per shape.')
+        # Shapes
         for shape in self._shape_dic.keys():
-            previous_error = 0
-            for size in self.sizes:
-                if shape in ['box', 'capsule', 'cylinder']:
-                    size = [size, size, size]
-                name = self.spawn_object(shape, size)
-                opt = self.optimize(name)
-                # time.sleep(0.1)  
+            print(shape)
 
-                current_error = opt.getCosts()
+            size_combi = [0.01 for _ in range(self._shape_dic[shape][1])]
+            # Dimensions
+            for dim in range(self._shape_dic[shape][1]):
+                print('###############################################')
+                print(f'Starting to change dimension {dim}.')
+                print('###############################################')
 
-                # First condition: Error starts increasing for the current shape.
-                # That means the current size is the best fit for the given shape.
-                if current_error > previous_error and previous_error != 0:
-                    # Second condition: the smallest error of the current shape is less than the smallest
-                    # error of any shape that came before.
-                    if not smallest_error or previous_error < smallest_error:
-                        smallest_error = previous_error
-                        best_shape = previous_shape
-                        best_size = previous_size
-                        best_position = previous_position
-                        self.Model.delFrame(name)
-                        break
+                previous_error = 0
+                # Sizes
+                for size in self.sizes:
+                    size = np.round(size, decimals=5)
+                    size_combi[dim] = size
 
-                previous_error = current_error
-                previous_shape = shape
-                previous_size = size
-                previous_position = self.Model.frame(name).getPosition()
+                    # print(size_combi)
 
-                self.Model.delFrame(name)
+                    name = self.spawn_object(shape, size_combi)
+                    opt = self.optimize(name)
+
+                    current_error = opt.getCosts()
+                    # print(f'Current: {current_error}')
+                    # print(f'Previous: {previous_error}')
+
+                    print(f'Error difference: (current - previous_error): {current_error - previous_error:.4f}')
+                    print(f'Absolute error: {current_error:.6f}')
+
+
+                    # First condition: Error starts increasing for the current shape and dimension.
+                    # That means the current size is the best fit for the given shape and dimension. 
+                    # if current_error > previous_error and previous_error != 0:
+                    if current_error > previous_error + 0.1 and previous_error != 0:
+                        # Second condition: the smallest error of the current shape is less than the smallest
+                        # error of any shape that came before.
+                        if not smallest_error or previous_error < smallest_error:
+                            smallest_error = previous_error
+                            print(f'New smallest error: {smallest_error}')
+                            best_shape = previous_shape
+                            best_size = previous_size
+                            size_combi[dim] = best_size[dim]
+                            # print(previous_size)
+                            print(f'New best size: {best_size}')
+                            best_position = previous_position
+                            # if dim==0:
+                            self.Model.delFrame(name)
+                            break
+
+                        else:
+                            self.Model.delFrame(name)
+                            break
+
+                    # print(f'Changing previous_error from {previous_error} to {current_error}.')
+                    previous_error = copy.deepcopy(current_error)
+                    previous_shape = copy.deepcopy(shape)
+                    previous_size = copy.deepcopy(size_combi)
+                    previous_position = self.Model.frame(name).getPosition()
+
+                    self.Model.delFrame(name)
+
+
+            if smallest_error is not None and smallest_error < error_threshold:
+                print(f'Got error ({smallest_error}) below threshold ({error_threshold}), skipping remaining iterations.')
+                break
 
         print(colored('################## OPTIMIZATION RESULTS ##################', color='green', attrs=['bold']))
         print(colored('Best shape match: {}'.format(best_shape), color='white', attrs=['bold']))
@@ -240,7 +348,6 @@ class Perceptor(object):
         name = self.spawn_object(best_shape, best_size, best_position, color=[0,1,0])
 
         return name, best_shape
-        # return best_shape, best_size, best_position
 
 
     def open_gripper(self):
@@ -254,6 +361,8 @@ class Perceptor(object):
             self.gripper_open = True
             self.steps_taken += 1
 
+
+    # @debug
     def grasp(self, shape):
         self.Simulation.closeGripper("R_gripper")
         print('Attempting to grasp object...')
@@ -272,6 +381,7 @@ class Perceptor(object):
                 self.gripper_open = False
                 self.open_gripper()
                 return False
+
 
     def move_to_target_pre_grasp(self, target_name, **kwargs):
         n_steps = 50
@@ -333,9 +443,10 @@ class Perceptor(object):
             self.steps_taken += 1
             time.sleep(self.tau)
 
+
     def place_object(self, target_shape):
         if target_shape == 'sphere':
-            target = [0.5, -1.3, 0.8]
+            target = [0.0, -1.3, 0.8]
         else:
             target = [0.6, 0.1, 0.8]
         n_steps = 30
@@ -357,61 +468,105 @@ class Perceptor(object):
     def pick_and_place_object(self, target_name, target_shape):
         self.move_to_target_pre_grasp(target_name=target_name)
         self.move_down()
-        self.grasp(shape=target_shape)
+        grasp_success = self.grasp(shape=target_shape)
         self.move_to_start()
-        time.sleep(0.5)
-        self.place_object(target_shape=target_shape)
-        self.open_gripper()
-        self.move_to_start()
+        if grasp_success:
+            time.sleep(0.2)
+            self.place_object(target_shape=target_shape)
+            self.open_gripper()
+            self.move_to_start()
+            return True
+        else: 
+            return False
+
+    # @debug
+    def detect(self):
+        self.step(100)
+        [rgb, depth] = self.Simulation.getImageAndDepth() 
+        self.update_binary_mask(rgb)
+        self.update_point_cloud(rgb, depth)
+        self.step(10)
+        try:
+            assert len(self.current_object_points)>0, 'No valid point cloud objects detected!'
+            self.spawn_cloud_objects()
+            return True
+
+        except Exception as e:
+            print(e)
+            return False
+
+        finally:
+            self.step(10)
+
+    # @debug
+    def detect_and_sort(self):
+        detected = self.detect()
+        if detected:
+            name, shape = self.find_best_fit()
+            self.step(10)
+            self.delete_cloud_objects()
+            success = self.pick_and_place_object(target_name=name, target_shape=shape)
+            self.Model.delFrame(name)
+            if success:
+                return True
+            else:
+                return False
+        else:
+            return True
 
 
     def spawn_random_object(self):
         shapes = list(self._shape_dic.keys())
         shape = random.choice(shapes)
         size = []
-        for i in range(3):
-        # for i in range(self._shape_dic[shape][1]):
+        # for i in range(3):
+        for i in range(self._shape_dic[shape][1]):
             size.append(random.choice(self.sizes))
         position = []
-        position.append(random.choice(self.positions))
-        position.append(random.choice(self.positions))
+        position.append(3 + random.choice(self.positions))
+        position.append(3 + random.choice(self.positions))
         position.append(1.5)
 
         self.objects_spawned += 1
 
         obj_name = 'Object_{}'.format(self.objects_spawned)
         spawn_object = self.RealWorld.addFrame(obj_name)
-        spawn_object.setShape(ry.ST.box, size)
-        # spawn_object.setShape(self._shape_dic[shape][0], size)
+        # spawn_object.setShape(ry.ST.box, size)
+        spawn_object.setShape(self._shape_dic[shape][0], size)
         spawn_object.setColor([1,0,0])
+        # self.RealWorld.attach("world", obj_name)
         spawn_object.setPosition(position)
         spawn_object.setMass(1.1)
         spawn_object.setContact(1)
         self.Model_Viewer.recopyMeshes(self.Model)
         self.Model_Viewer.setConfiguration(self.Model)
 
+
+    def object_to_workspace(self):
+        object_index = random.choice(self.object_indices)
+        self.object_indices = np.delete(self.object_indices, np.where(self.object_indices == object_index))
+        obj_name = 'Object_{}'.format(object_index)
+        pos = []
+        pos.append(np.random.uniform(low=-0.3, high=0.3))
+        pos.append(np.random.uniform(low=0.0, high=0.3))
+        pos.append(1.5)
+
+        f = self.RealWorld.getFrame(obj_name)
+        f.setPosition(pos)
+        self.Simulation.setState(self.RealWorld.getFrameState())
+        self.Simulation.step([], self.tau, ry.ControlMode.none)
+
+        self.step(100)
+
+
 if __name__ == "__main__":
-    detector = Perceptor(1)
 
-    for t in range(2000):
+    detector = Perceptor(30)
 
-        if t%10 == 0:
-            [rgb, depth] = detector.Simulation.getImageAndDepth() 
-            detector.update_binary_mask(rgb)
-            detector.update_point_cloud(rgb, depth)
+    while True:
 
-        if t==150:
-            detector.spawn_cloud_objects()
-
-        if t==480:
-            name, shape = detector.find_best_fit()
-
-        # if t==200:
-            # detector.delete_cloud_objects()
-
-        # if t==220:
-            # detector.pick_and_place_object(target_name=name, target_shape=shape)
-
-        detector.step()
-
-    
+        detector.object_to_workspace()
+        # detector.detect()
+        success = False
+        while not success:
+            success = detector.detect_and_sort()
