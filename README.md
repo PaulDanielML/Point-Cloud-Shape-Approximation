@@ -1,10 +1,17 @@
-# Using point cloud data to approximate positions, orientations and shapes of primitive shapes 
+# Approximating shapes, positions and sizes from point cloud data for robotic grasping
 
+Author: Paul Daniel (pdd@mp.aau.dk)
 
-Approximation process (slowed down)           |  Console output
+Approximation process	           |  Console output
 :---------------------------------:|:-------------------------:
 ![](/media/gif_1.gif "Shape approximation")  |  ![](/media/img_1.png "Output")
 
+YouTube Video:
+
+[![video](https://img.youtube.com/vi/LC4D6ko-C4c/0.jpg)](https://www.youtube.com/watch?v=LC4D6ko-C4c)
+
+
+The following pseudocode shows the structure of the created algorithm used for finding the approximations. 
 
 ![](/media/algo.png "Algorithm")
 
