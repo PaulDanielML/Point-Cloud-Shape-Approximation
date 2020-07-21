@@ -16,10 +16,13 @@ class Perceptor(object):
         self.no_obj = no_obj
         self._shape_dic = {'sphere': [ry.ST.sphere, 1], 'cylinder': [ry.ST.cylinder, 2], 'box': [ry.ST.box, 3]}
         self.steps_taken = 0
-        self.sizes = np.arange(0.025, 0.1, 0.002)
-        # self.sizes = np.arange(0.025, 0.06, 0.001)
+        self._size_parameters = [0.025, 0.1, 0.002]
+        # self._size_parameters = [0.025, 0.06, 0.001]
+        self._sizes = np.arange(*self._size_parameters)
         self.positions = np.arange(-0.3, 0.35, 0.05)
         self.locations = {'trash': [0.0, -1.3, 0.8], 'good': [0.55, 0.05, 0.65], 'maybe': [-0.55, 0.05, 0.65]}
+        self._error_threshold = 0.01
+        self._error_change_threshold = 0.01
         self.object_indices = np.arange(1, self.no_obj+1)
         self.objects_spawned = 0
         self.RealWorld = ry.Config()
@@ -47,6 +50,72 @@ class Perceptor(object):
 
     def __repr__(self):
         return f'Perceptor({self.no_obj} Objects)'
+
+
+    @property
+    def sizes(self):
+        return self._sizes
+
+
+    @property
+    def size_parameters(self):
+        return self._size_parameters
+
+
+    @size_parameters.setter
+    def size_parameters(self, new_params):
+        """
+        Use this setter for changing the parameters of the sizes of the objects to spawn and try out [start, end, step].
+        """
+
+        try:
+            assert isinstance(new_params, list), 'Size parameters need to be specified in a list.'
+            assert len(new_params)==3, 'Size parameters list needs to be of length 3.'
+            self._size_parameters = new_params
+            self._sizes = np.arange(*self._size_parameters)
+        except Exception as e:
+            print(e)
+            print(f'Could not set size_parameters.')
+
+
+    @property
+    def error_threshold(self):
+        return self._error_threshold
+
+
+    @error_threshold.setter
+    def error_threshold(self, new_threshold):
+        """
+        Use this setter for changing the error threshold at which iteration is completely stopped.
+        """
+
+        try:
+            assert isinstance(new_threshold, (int, float)), 'Threshold value needs to be an integer or float.'
+            assert new_threshold > 0, 'Error threshold needs to be a positive number.'
+            self._error_threshold = new_threshold
+        except Exception as e:
+            print(e)
+            print(f'Could not set error_threshold.')
+
+
+    @property
+    def error_change_threshold(self):
+        return self._error_change_threshold
+
+
+    @error_change_threshold.setter
+    def error_change_threshold(self, new_threshold):    
+        """
+        Use this setter for changing the threshold of change in error, at which point iteration of the current object dimension is stopped.
+        """
+
+        try:
+            assert isinstance(new_threshold, (int, float)), 'Threshold value needs to be an integer or float.'
+            assert new_threshold > 0, 'Error threshold needs to be a positive number.'
+            self._error_change_threshold = new_threshold
+        except Exception as e:
+            print(e)
+            print(f'Could not set error_change_threshold.')
 
 
     def _reorder_objects(self):
@@ -189,7 +258,7 @@ class Perceptor(object):
         # self.test_object.setPosition(center[0])
 
     @timer               
-    def find_best_fit(self, error_threshold=0.01):
+    def find_best_fit(self):
         smallest_error = None
         
         # print(f'Finding best match among {len(self._shape_dic)} shapes, trying max. of {len(self.sizes)} sizes per shape dimension.')
@@ -227,22 +296,19 @@ class Perceptor(object):
 
                     # First condition: Error starts increasing for the current shape and dimension.
                     # That means the current size is the best fit for the given shape and dimension. 
-                    if current_error > previous_error + 0.01 and previous_error != 0:
+                    if (current_error > (previous_error + self._error_change_threshold)) and previous_error != 0:
                         # Second condition: the smallest error of the current shape is less than the smallest
                         # error of any shape that came before.
                         if not smallest_error or previous_error < smallest_error:
                             smallest_error = previous_error
-                            print(f'New smallest error: {smallest_error}')
                             best_shape = previous_shape
                             best_size = previous_size
+                            print(f'New smallest error: {smallest_error:.5f} for {best_shape} of size {best_size}')
                             if shape=='box':
                                 size_combi[-(dim+1)] = best_size[-(dim+1)]
                             else:
                                 size_combi[dim] = best_size[dim]
-                            # print(previous_size)
-                            # print(f'New best size: {best_size}')
                             best_position = previous_position
-                            # if dim==0:
                             self.Model.delFrame(name)
                             break
 
@@ -251,11 +317,9 @@ class Perceptor(object):
                                 size_combi[-(dim+1)] = previous_size[-(dim+1)]
                             else:
                                 size_combi[dim] = previous_size[dim]
-                            # size_combi[dim] = previous_size[dim]
                             self.Model.delFrame(name)
                             break
 
-                    # print(f'Changing previous_error from {previous_error} to {current_error}.')
                     previous_error = copy.deepcopy(current_error)
                     previous_shape = copy.deepcopy(shape)
                     previous_size = copy.deepcopy(size_combi)
@@ -264,8 +328,8 @@ class Perceptor(object):
                     self.Model.delFrame(name)
 
 
-            if smallest_error is not None and smallest_error < error_threshold:
-                print(f'Got error ({smallest_error}) below threshold ({error_threshold}), skipping remaining iterations.')
+            if smallest_error is not None and smallest_error < self._error_threshold:
+                print(f'Got error ({smallest_error}) below threshold ({self._error_threshold}), skipping remaining iterations.')
                 break
 
         print(colored('################## OPTIMIZATION RESULTS ##################', color='green', attrs=['bold']))
@@ -440,7 +504,6 @@ class Perceptor(object):
     # @debug
     def analyse_object(self, target_shape, target_size, error):
         result = []
-        print(self.locations['good'][2])
         if self.locations['maybe'][2] > 1.7:
             self.locations['maybe'][1] -= 0.15
             self.locations['maybe'][2] = 0.65
@@ -515,6 +578,15 @@ class Perceptor(object):
             return True
 
 
+    def approximate_only(self):
+        self.detect()
+        name, shape, size, error = self.find_best_fit()
+        self.step(100)
+        self.delete_cloud_objects()
+        time.sleep(3)
+        self.Model.delFrame(name)
+
+
     def spawn_random_object(self):
         shapes = list(self._shape_dic.keys())
         shape = random.choice(shapes)
@@ -545,8 +617,8 @@ class Perceptor(object):
         self.objects_spawned += 1
         obj_name = 'Object_{}'.format(self.objects_spawned)
         spawn_object = self.RealWorld.addFrame(obj_name)
-        spawn_object.setShape(ry.ST.box, [0.09,0.09,0.03])
-        # spawn_object.setShape(ry.ST.cylinder, [0.03,0.05])
+        # spawn_object.setShape(ry.ST.box, [0.09,0.09,0.03])
+        spawn_object.setShape(ry.ST.cylinder, [0.03,0.05])
         position = []
         position.append(3 + random.choice(self.positions))
         position.append(3 + random.choice(self.positions))
@@ -559,15 +631,17 @@ class Perceptor(object):
         self.Model_Viewer.setConfiguration(self.Model)
 
 
-
-    def object_to_workspace(self):
+    def object_to_workspace(self, demonstration=False):
         object_index = random.choice(self.object_indices)
         self.object_indices = np.delete(self.object_indices, np.where(self.object_indices == object_index))
         obj_name = 'Object_{}'.format(object_index)
         pos = []
-        pos.append(np.random.uniform(low=-0.3, high=0.3))
-        pos.append(np.random.uniform(low=0.0, high=0.3))
-        pos.append(1.5)
+        if demonstration:
+            pos = [0.1, 0.1, 1.5]
+        else:
+            pos.append(np.random.uniform(low=-0.3, high=0.3))
+            pos.append(np.random.uniform(low=0.0, high=0.3))
+            pos.append(1.5)
 
         f = self.RealWorld.getFrame(obj_name)
         f.setPosition(pos)
