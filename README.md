@@ -8,7 +8,7 @@ Approximation process	           |  Console output
 
 YouTube Video:
 
-[![video](https://img.youtube.com/vi/LC4D6ko-C4c/0.jpg)](https://www.youtube.com/watch?v=LC4D6ko-C4c)
+[![video](https://img.youtube.com/vi/LC4D6ko-C4c/0.jpg)](https://www.youtube.com/watch?v=LC4D6ko-C4c)  
 
 
 The following pseudocode shows the structure of the created algorithm used for finding the approximations. 
