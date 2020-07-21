@@ -129,7 +129,6 @@ class Perceptor(object):
     
         # self.Model_Viewer.recopyMeshes(self.Model)
         # self.Model_Viewer.setConfiguration(self.Model)
-        # print(self.RealWorld.getFrameNames())
 
 
     def _set_focal_length(self, f):
@@ -163,10 +162,6 @@ class Perceptor(object):
 
         depth_mask = cv2.bitwise_and(depth, depth, mask=self.bin_mask)
         points = self.Simulation.depthData2pointCloud(depth_mask, self.fxfypxpy)
-        # print(f'min x value: {np.min(points[:,:,0])}')
-        # print(f'max x value: {np.max(points[:,:,0])}')
-        # print(f'min y value: {np.min(points[:,:,1])}')
-        # print(f'max x value: {np.max(points[:,:,1])}')
         self.current_object_points = [j for i in points for q,j in enumerate(i) if j[0]!=0 and j[1]!=0 and j[2]!=0 \
                                        and j[2]>-2.0 and j[0] > -0.35 and j[0] < 0.35 and j[1] > -0.45 and j[1] < 0.1]
         self.camera_Frame.setPointCloud(points, rgb)
@@ -186,7 +181,6 @@ class Perceptor(object):
         self.no_point_objects = 0
         self.point_object_list = []
         if len(self.current_object_points) > 150:
-            # spawn_every = 1
             spawn_every = 2
         else:
             spawn_every = 1
@@ -197,9 +191,6 @@ class Perceptor(object):
                 obj_name = 'Point_object_{}'.format(i+1)
                 point_object = self.Model.addFrame(obj_name)
                 point_object.setShape(ry.ST.sphere, [.0005])
-                # if i == 20:
-                    # point_object.setColor([0, 0, 1])
-                # point_object.setShape(ry.ST.sphere, [.002])
                 self.Model.attach('camera', obj_name)
                 point_object.setRelativePosition(position)
                 point_object.setColor([0,0,1])
@@ -221,7 +212,6 @@ class Perceptor(object):
         optimizer.clearObjectives()
         optimizer.add_qControlObjective(order=1, scale=1e3)#
         optimizer.addSquaredQuaternionNorms(0., 1., 1e2)#
-
 
         optimizer.addObjective([1.], ry.FS.distance, [obj_name, "table"], ry.OT.eq, [1e4], target=[0.0001]);
         optimizer.addObjective([1.], ry.FS.quaternionDiff, [obj_name, 'world'], ry.OT.eq, [1e2]);
@@ -254,8 +244,7 @@ class Perceptor(object):
         self.Model_Viewer.setConfiguration(self.Model)
 
         return object_name
-        # center = self.get_centers(1).tolist()
-        # self.test_object.setPosition(center[0])
+
 
     @timer               
     def find_best_fit(self):
@@ -347,7 +336,6 @@ class Perceptor(object):
 
     def open_gripper(self):
         self.Simulation.openGripper("R_gripper")
-        # self.Model.attach("world", "object")
         for i in range(50):
             time.sleep(self.tau)
             self.Simulation.step([], self.tau, ry.ControlMode.none)
@@ -368,7 +356,6 @@ class Perceptor(object):
             self.Model_Viewer.setConfiguration(self.Model)
             self.steps_taken += 1
             if self.Simulation.getGripperIsGrasping("R_gripper"): 
-                # self.Model.attach("R_gripper", "object")
                 print(colored(f'Grasped a {shape}!', color='yellow', attrs=['blink', 'bold']))
                 return True
             if self.Simulation.getGripperWidth("R_gripper") < -0.05 and self.gripper_open: 
@@ -473,8 +460,6 @@ class Perceptor(object):
         planer.addObjective([1.], ry.FS.vectorY, ["R_gripperCenter"], ry.OT.eq, scale=[1e2], target=[0,1,0]);
         planer.addObjective([1.], ry.FS.vectorX, ["R_gripperCenter"], ry.OT.eq, scale=[1e2], target=[1,0,0]);
         planer.addObjective([1.], ry.FS.qItself, [], ry.OT.eq, [1e1], order=1);
-        # planer.addObjective([1.], ry.FS.scalarProductYX, ["R_gripperCenter", target_name], ry.OT.eq);
-        # planer.addObjective([1.], ry.FS.scalarProductYY, ["R_gripperCenter", target_name], ry.OT.eq);
         planer.optimize()
         for t in range(n_steps):
             self.Model.setFrameState(planer.getConfiguration(t))
@@ -544,7 +529,6 @@ class Perceptor(object):
 
     # @debug
     def detect(self):
-        # self.step(100)
         [rgb, depth] = self.Simulation.getImageAndDepth() 
         self.update_binary_mask(rgb)
         self.update_point_cloud(rgb, depth)
@@ -602,10 +586,8 @@ class Perceptor(object):
 
         obj_name = 'Object_{}'.format(self.objects_spawned)
         spawn_object = self.RealWorld.addFrame(obj_name)
-        # spawn_object.setShape(ry.ST.box, size)
         spawn_object.setShape(self._shape_dic[shape][0], size)
         spawn_object.setColor([1,0,0])
-        # self.RealWorld.attach("world", obj_name)
         spawn_object.setPosition(position)
         spawn_object.setMass(1.1)
         spawn_object.setContact(1)
